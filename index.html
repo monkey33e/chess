@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>2인용 체스 (색상 초기화 + 소리 토글)</title>
+<style>
+  :root{
+    --board-size: 800px;
+    --light:#EEEED2;
+    --dark:#769656;
+    --piece-white:#ffffff;
+    --piece-black:#111111;
+    --select:#ffd43b88; --hint:#228be666; --capture:#fa525266;
+    --mate-ring:#22c55e;
+  }
+  *{box-sizing:border-box}
+  body{font-family:system-ui,Segoe UI,Roboto,sans-serif;display:grid;place-items:center;min-height:100vh;background:#0f172a;color:#e2e8f0;margin:0}
+  .wrap{display:grid;grid-template-columns:var(--board-size) 360px;gap:20px;padding:24px;align-items:start}
+  .panel{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:16px;box-shadow:0 10px 30px #0006}
+  h1{font-size:20px;margin:0 0 12px;color:#f8fafc}
+  .status{margin:6px 0 12px;font-weight:800;min-height:1.2em}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  button{background:#1f2937;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700}
+  button:hover{background:#0b7285;border-color:#0b7285}
+  .log{height:calc(var(--board-size) - 220px);overflow:auto;background:#0b0f1a;border:1px solid #1e293b;border-radius:10px;padding:8px;font-family:ui-monospace,Menlo,monospace}
+  .log div{padding:4px 6px;border-radius:6px}
+  .log div:nth-child(odd){background:#0f172a}
+
+  .board{width:var(--board-size);height:var(--board-size);display:grid;grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);
+    border:10px solid #0b0f1a;border-radius:16px;box-shadow:0 20px 60px #0008,inset 0 0 0 1px #1f2937;position:relative;overflow:hidden}
+  .sq{display:flex;align-items:center;justify-content:center;font-size:calc(var(--board-size)/10);user-select:none;position:relative}
+  .sq.light{background:var(--light)} .sq.dark{background:var(--dark)}
+  .sq.coord::after{content:attr(data-ax);position:absolute;left:6px;bottom:4px;font-size:12px;color:#000a;font-weight:800}
+  .piece{line-height:1;-webkit-text-stroke:2px #000;-webkit-text-fill-color: currentColor;filter:drop-shadow(0 1px 0 #0006) drop-shadow(0 6px 8px #0005)}
+  .piece.w{color:var(--piece-white)} .piece.b{color:var(--piece-black)}
+  .sq.selected{box-shadow:inset 0 0 0 4px var(--select)}
+  .sq.hint::before{content:"";position:absolute;width:26%;height:26%;border-radius:50%;background:var(--hint);box-shadow:0 0 0 4px #0003}
+  .sq.capture::before{content:"";position:absolute;inset:12%;border:4px dashed #e03131cc;border-radius:12px;background: var(--capture)}
+  .sq.in-check{box-shadow:inset 0 0 0 5px #ff2b2bcc, 0 0 20px #ff2b2b66}
+  .sq.mate-king{box-shadow:inset 0 0 0 5px var(--mate-ring), 0 0 20px #22c55e99}
+
+  .overlay{position:absolute;inset:0;background:#0008;display:grid;place-items:center;z-index:5}
+  .card{background:#0b0f1a;border:1px solid #1e293b;border-radius:12px;padding:14px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center;min-width:260px}
+  .overlay h2{margin:0 0 8px;font-size:18px;text-align:center;width:100%}
+  .overlay p{margin:0 6px 6px;opacity:.85;width:100%;text-align:center}
+  .promo .card button{font-size:28px;padding:10px 14px}
+  .result .card button{padding:8px 12px}
+
+  .colors{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0 10px}
+  .color-item{display:flex;align-items:center;justify-content:space-between;gap:8px;background:#0b0f1a;border:1px solid #1e293b;border-radius:10px;padding:8px}
+  .color-item label{font-size:12px;opacity:.9}
+  .color-item input[type="color"]{width:42px;height:28px;border:none;background:transparent;padding:0;cursor:pointer}
+
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+  .foot{opacity:.7;font-size:12px;margin-top:8px}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="board" id="board" aria-label="체스 보드"></div>
+
+    <div class="panel">
+      <h1>2인용 체스 (made by mtai_tfcs)</h1>
+      <div class="status" id="status">백 차례 (White to move)</div>
+
+      <!-- 색상 커스터마이즈 -->
+      <div class="colors">
+        <div class="color-item"><label>밝은 칸</label><input id="lightColor" type="color" value="#EEEED2" /></div>
+        <div class="color-item"><label>어두운 칸</label><input id="darkColor" type="color" value="#769656" /></div>
+        <div class="color-item"><label>백 기물</label><input id="whitePiece" type="color" value="#167215198" /></div>
+        <div class="color-item"><label>흑 기물</label><input id="blackPiece" type="color" value="#606060" /></div>
+      </div>
+      <div class="row">
+        <button id="resetColorsBtn">🎨 기본 색으로</button>
+        <button id="soundToggleBtn">🔊 소리: 켬</button>
+      </div>
+
+      <div class="btns">
+        <button id="undoBtn">↶ 되돌리기</button>
+        <button id="resetBtn">♻ 리셋</button>
+        <button id="flipBtn">⤿ 보드 뒤집기</button>
+      </div>
+      <div class="log" id="log" aria-label="이동 기록"></div>
+      <div class="foot">규칙: 체크/메이트/스테일, 프로모션, 캐슬링 포함. (앙파상 미포함)</div>
+    </div>
+  </div>
+
+<script>
+/* ===================== 기본 설정 ===================== */
+const files=['a','b','c','d','e','f','g','h'];
+const ranks=[8,7,6,5,4,3,2,1];
+const boardEl=document.getElementById('board');
+const statusEl=document.getElementById('status');
+const logEl=document.getElementById('log');
+
+const undoBtn=document.getElementById('undoBtn');
+const resetBtn=document.getElementById('resetBtn');
+const flipBtn=document.getElementById('flipBtn');
+const resetColorsBtn=document.getElementById('resetColorsBtn');
+const soundToggleBtn=document.getElementById('soundToggleBtn');
+
+const lightPicker = document.getElementById('lightColor');
+const darkPicker  = document.getElementById('darkColor');
+const whitePiecePicker = document.getElementById('whitePiece');
+const blackPiecePicker = document.getElementById('blackPiece');
+
+const COLOR_DEFAULTS = {
+  light:'#EEEED2', dark:'#769656',
+  w:'#ffffff', b:'#111111'
+};
+
+let state, selected=null, hints=new Set(), captures=new Set(), history=[], flipped=false;
+let checkSquare=null;   // 체크 중 킹 위치
+let mateSquare=null;    // 메이트된 킹 위치(초록)
+let gameOver=false;
+
+const UNI={ w:{K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙'}, b:{K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'} };
+
+/* ===================== 오디오: “탁” 소리 & 토글 ===================== */
+let soundOn = true;
+let actx=null;
+function ctx(){
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  // 일부 브라우저에서 첫 사용자 상호작용 후에만 재생 가능 → 보정
+  if (actx.state === 'suspended') {
+    actx.resume().catch(()=>{});
+  }
+  return actx;
+}
+function ping(ms=160){
+  if(!soundOn) return;
+  try{
+    const a=ctx();
+    const o=a.createOscillator(), g=a.createGain();
+    o.type='triangle';
+    o.frequency.setValueAtTime(880,a.currentTime);
+    o.frequency.exponentialRampToValueAtTime(740,a.currentTime+ms/1000);
+    g.gain.setValueAtTime(0.0001,a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.25,a.currentTime+0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001,a.currentTime+ms/1000);
+    o.connect(g).connect(a.destination);
+    o.start(); o.stop(a.currentTime+ms/1000+0.02);
+  }catch(e){}
+}
+function thock(ms=120){
+  if(!soundOn) return;
+  try{
+    actx = actx || new (window.AudioContext||window.webkitAudioContext)();
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    const lp = actx.createBiquadFilter();
+    // 짧고 탄력 있는 “탁” 느낌: 사각파 + 저역통과 + 급감소 엔벨롭
+    o.type = 'square';
+    o.frequency.setValueAtTime(220, actx.currentTime);          // 낮은 톤 시작
+    o.frequency.exponentialRampToValueAtTime(140, actx.currentTime + ms/1000); // 살짝 내려가며 감김
+    g.gain.setValueAtTime(0.0001, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.35, actx.currentTime + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + ms/1000);
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(1200, actx.currentTime);
+    o.connect(g).connect(lp).connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + ms/1000 + 0.02);
+  }catch(e){}
+}
+function toggleSound(){
+  soundOn = !soundOn;
+  soundToggleBtn.textContent = soundOn ? '🔊 소리: 켬' : '🔇 소리: 끔';
+}
+
+/* ===================== 상태/보드 ===================== */
+function initState(){
+  const empty=Array.from({length:8},()=>Array(8).fill(null));
+  const place=(r,f,c,t)=> empty[r][f]={c,t,moved:false};
+  const back=['R','N','B','Q','K','B','N','R'];
+  // black
+  back.forEach((t,f)=>place(0,f,'b',t)); for(let f=0; f<8; f++) place(1,f,'b','P');
+  // white
+  for(let f=0; f<8; f++) place(6,f,'w','P'); back.forEach((t,f)=>place(7,f,'w',t));
+  return {board:empty, turn:'w'};
+}
+function cloneState(s){ return {board: s.board.map(row=>row.map(x=>x?{...x}:null)), turn:s.turn}; }
+function toAlg(r,c){ return files[c]+ranks[r]; }
+
+function draw(){
+  boardEl.innerHTML='';
+  const rankOrder=flipped?[...ranks].reverse():ranks;
+  const fileOrder=flipped?[...files].reverse():files;
+  for(let ri=0;ri<8;ri++){
+    for(let fi=0;fi<8;fi++){
+      const r=ranks.indexOf(rankOrder[ri]);
+      const c=files.indexOf(fileOrder[fi]);
+      const sq=document.createElement('div');
+      sq.className=`sq ${(r+c)%2===0?'light':'dark'}`;
+      sq.dataset.r=r; sq.dataset.c=c;
+      if((!flipped && r===7) || (flipped && r===7)){ sq.classList.add('coord'); sq.dataset.ax=fileOrder[fi]; }
+      const p=state.board[r][c];
+      if(p){ const el=document.createElement('div'); el.className=`piece ${p.c}`; el.textContent=UNI[p.c][p.t]; sq.appendChild(el); }
+      if(selected && selected[0]===r && selected[1]===c) sq.classList.add('selected');
+      const k=`${r}-${c}`; if(hints.has(k)) sq.classList.add('hint'); if(captures.has(k)) sq.classList.add('capture');
+      if(mateSquare && mateSquare.r===r && mateSquare.c===c) sq.classList.add('mate-king');
+      else if(checkSquare && checkSquare.r===r && checkSquare.c===c) sq.classList.add('in-check');
+
+      sq.addEventListener('click',()=>onSquare(r,c));
+      boardEl.appendChild(sq);
+    }
+  }
+  if(!gameOver){
+    statusEl.textContent = state.turn==='w' ? '백 차례 (White to move)' : '흑 차례 (Black to move)';
+  } else {
+    // 게임 끝나면 상태 라벨은 비워둠(모달만 사용)
+    statusEl.textContent = '';
+  }
+}
+
+/* ===================== 입력/선택 ===================== */
+function onSquare(r,c){
+  if(gameOver) return;
+  const here=state.board[r][c];
+  if(selected){
+    const [sr,sc]=selected;
+    const legal=getLegalMovesFiltered(sr,sc);
+    const mv=legal.find(m=>m.r===r && m.c===c);
+    if(mv){ doMove(sr,sc,r,c,mv); return; }
+  }
+  if(here && here.c===state.turn){ selected=[r,c]; setHints(getLegalMovesFiltered(r,c)); draw(); }
+  else { clearSel(); draw(); }
+}
+
+function setHints(moves){ hints.clear(); captures.clear(); moves.forEach(m=>{const k=`${m.r}-${m.c}`; (m.capture?captures:hints).add(k);}); }
+function clearSel(){ selected=null; hints.clear(); captures.clear(); }
+
+/* ===================== 이동 생성기(의사합법 + 캐슬링 후보) ===================== */
+function pseudoMoves(r,c){
+  const p=state.board[r][c]; if(!p) return [];
+  const out=[];
+  const same=(rr,cc)=> state.board[rr]?.[cc]?.c===p.c;
+  const foe =(rr,cc)=> state.board[rr]?.[cc] && state.board[rr][cc].c!==p.c;
+  const empty=(rr,cc)=> !state.board[rr]?.[cc];
+  const push=(rr,cc,capture=false, special=null)=>{ if(rr<0||rr>7||cc<0||cc>7) return; if(same(rr,cc)) return; out.push({r:rr,c:cc,capture,special}); };
+
+  if(p.t==='N'){
+    [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc])=>{
+      const rr=r+dr, cc=c+dc; if(rr<0||rr>7||cc<0||cc>7) return; if(same(rr,cc)) return; push(rr,cc,!!foe(rr,cc));
+    });
+  }
+  if(p.t==='K'){
+    for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+      if(!dr && !dc) continue; const rr=r+dr, cc=c+dc; if(rr<0||rr>7||cc<0||cc>7) continue; if(same(rr,cc)) continue; push(rr,cc,!!foe(rr,cc));
+    }
+    if(!p.moved){
+      if(canCastleSideCandidate(state, p.c, 'king')) push(r,6,false,{castle:'king'});
+      if(canCastleSideCandidate(state, p.c, 'queen')) push(r,2,false,{castle:'queen'});
+    }
+  }
+  const slide=(dirs)=>{
+    for(const [dr,dc] of dirs){
+      let rr=r+dr, cc=c+dc;
+      while(rr>=0&&rr<8&&cc>=0&&cc<8){
+        if(state.board[rr][cc]){
+          if(foe(rr,cc)) push(rr,cc,true);
+          break;
+        } else { push(rr,cc,false); }
+        rr+=dr; cc+=dc;
+      }
+    }
+  };
+  if(p.t==='B') slide([[1,1],[1,-1],[-1,1],[-1,-1]]);
+  if(p.t==='R') slide([[1,0],[-1,0],[0,1],[0,-1]]);
+  if(p.t==='Q') slide([[1,1],[1,-1],[-1,1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]]);
+
+  if(p.t==='P'){
+    const dir=p.c==='w'?-1:1, start=p.c==='w'?6:1;
+    if(empty(r+dir,c)) push(r+dir,c,false);
+    if(r===start && empty(r+dir,c) && empty(r+2*dir,c)) push(r+2*dir,c,false);
+    for(const dc of [-1,1]){
+      const rr=r+dir, cc=c+dc;
+      if(rr>=0&&rr<8&&cc>=0&&cc<8 && state.board[rr][cc] && state.board[rr][cc].c!==p.c) push(rr,cc,true);
+    }
+  }
+  return out;
+}
+
+/* ===================== 캐슬링 판단 ===================== */
+function canCastleSideCandidate(s, color, side){
+  const row = (color==='w') ? 7 : 0;
+  const king = s.board[row][4];
+  if(!king || king.t!=='K' || king.moved) return false;
+  if(side==='king'){
+    const rook = s.board[row][7];
+    if(!rook || rook.t!=='R' || rook.moved) return false;
+    return !s.board[row][5] && !s.board[row][6];
+  } else {
+    const rook = s.board[row][0];
+    if(!rook || rook.t!=='R' || rook.moved) return false;
+    return !s.board[row][1] && !s.board[row][2] && !s.board[row][3];
+  }
+}
+function canCastle(s, color, side){
+  if(inCheck(s, color)) return false;
+  if(!canCastleSideCandidate(s, color, side)) return false;
+  const row = (color==='w') ? 7 : 0;
+  const foe = (color==='w') ? 'b' : 'w';
+  if(side==='king'){
+    if(squareAttackedBy(s, foe, row, 5)) return false;
+    if(squareAttackedBy(s, foe, row, 6)) return false;
+    return true;
+  } else {
+    if(squareAttackedBy(s, foe, row, 3)) return false;
+    if(squareAttackedBy(s, foe, row, 2)) return false;
+    return true;
+  }
+}
+
+/* ===================== 체크 판정 유틸 ===================== */
+function findKing(s, color){
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p=s.board[r][c]; if(p && p.c===color && p.t==='K') return {r,c};
+  } return null;
+}
+function squareAttackedBy(s, color, r, c){
+  const N=[[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]];
+  for(const [dr,dc] of N){ const rr=r+dr, cc=c+dc; const q=s.board[rr]?.[cc]; if(q && q.c===color && q.t==='N') return true; }
+  for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){ if(!dr && !dc) continue; const q=s.board[r+dr]?.[c+dc]; if(q && q.c===color && q.t==='K') return true; }
+  const dir=color==='w'?-1:1; for(const dc of [-1,1]){ const q=s.board[r-dir]?.[c-dc]; if(q && q.c===color && q.t==='P') return true; }
+  const rays=[[1,1],[1,-1],[-1,1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+  for(let i=0;i<rays.length;i++){
+    let [dr,dc]=rays[i], rr=r+dr, cc=c+dc;
+    while(rr>=0&&rr<8&&cc>=0&&cc<8){
+      const q=s.board[rr][cc];
+      if(q){
+        if(q.c===color){
+          if(i<4 && (q.t==='B'||q.t==='Q')) return true;
+          if(i>=4 && (q.t==='R'||q.t==='Q')) return true;
+        }
+        break;
+      }
+      rr+=dr; cc+=dc;
+    }
+  }
+  return false;
+}
+function inCheck(s, color){
+  const k=findKing(s,color); if(!k) return false;
+  const foe = color==='w'?'b':'w';
+  return squareAttackedBy(s, foe, k.r, k.c);
+}
+
+/* 의사이동 적용 */
+function applyMove(s, sr,sc,tr,tc, promotionT=null){
+  const ns=cloneState(s);
+  const piece=ns.board[sr][sc];
+  ns.board[tr][tc] = {...piece, moved:true};
+  ns.board[sr][sc] = null;
+  if(piece.t==='K' && Math.abs(tc-sc)===2){
+    const row=sr;
+    if(tc===6){ ns.board[row][5] = {...ns.board[row][7], moved:true}; ns.board[row][7]=null; }
+    if(tc===2){ ns.board[row][3] = {...ns.board[row][0], moved:true}; ns.board[row][0]=null; }
+  }
+  if(promotionT && piece.t==='P' && (tr===0 || tr===7)){
+    ns.board[tr][tc] = {c: piece.c, t: promotionT, moved:true};
+  }
+  return ns;
+}
+
+/* 자기 킹 노출 제거 + 캐슬링 합법성 반영 */
+function getLegalMovesFiltered(r,c){
+  const p=state.board[r][c]; if(!p) return [];
+  const pseudo=pseudoMoves(r,c);
+  const legal=[];
+  for(const m of pseudo){
+    if(p.t==='K' && m.special?.castle){
+      if(!canCastle(state, p.c, m.special.castle)) continue;
+    }
+    const willPromote = (p.t==='P' && (m.r===0 || m.r===7));
+    const ns=applyMove(state, r,c, m.r,m.c, willPromote ? 'Q' : null);
+    if(!inCheck(ns, p.c)) legal.push(m);
+  }
+  return legal;
+}
+function allLegalMovesOf(color){
+  const res=[];
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p=state.board[r][c];
+    if(p && p.c===color){
+      const ms=getLegalMovesFiltered(r,c);
+      if(ms.length) res.push({r,c,moves:ms});
+    }
+  }
+  return res;
+}
+
+/* ===================== 실행/히스토리 ===================== */
+function doMove(sr,sc,tr,tc, meta={}){
+  if(gameOver) return;
+  const piece=state.board[sr][sc];
+  const captured=state.board[tr][tc] ? {...state.board[tr][tc]} : null;
+
+  state.board[tr][tc]={...piece,moved:true};
+  state.board[sr][sc]=null;
+
+  if(piece.t==='K' && Math.abs(tc-sc)===2){
+    const row=sr;
+    if(tc===6){ state.board[row][5] = {...state.board[row][7], moved:true}; state.board[row][7] = null; }
+    else if(tc===2){ state.board[row][3] = {...state.board[row][0], moved:true}; state.board[row][0] = null; }
+  }
+
+  const finalize = (extra={})=>{
+    pushHistory(sr,sc,tr,tc,captured,state.board[tr][tc],extra);
+    // 둔 직후 “탁” 소리(소리 On일 때만)
+    thock(110);
+    state.turn = state.turn==='w' ? 'b' : 'w';
+    evaluateTurn();
+    clearSel(); draw();
+  };
+
+  if(piece.t==='P' && (tr===0 || tr===7)){
+    showPromotion(piece.c,(t)=>{
+      state.board[tr][tc]={c:piece.c,t,moved:true};
+      finalize({promotion:t});
+    });
+    return;
+  }
+
+  finalize({});
+}
+
+function pushHistory(sr,sc,tr,tc,captured,afterPiece,extra){
+  history.push({ before: JSON.parse(JSON.stringify(state.board)),
+    move:{from:[sr,sc],to:[tr,tc],notation:`${toAlg(sr,sc)}-${toAlg(tr,tc)}`,captured, piece:afterPiece, extra},
+    turn: state.turn });
+  const m=history.at(-1).move;
+  const div=document.createElement('div');
+  const icon=UNI[m.piece.c][m.piece.t];
+  const cap=m.captured ? ` ×${UNI[m.captured.c][m.captured.t]}` : '';
+  const promo=m.extra?.promotion ? ` =${m.extra.promotion}` : '';
+  const castleNote = (m.piece.t==='K' && Math.abs(m.to[1]-m.from[1])===2) ? (m.to[1]===6?' O-O':' O-O-O') : '';
+  div.textContent=`${icon}  ${m.notation}${cap}${promo}${castleNote}`;
+  logEl.appendChild(div); logEl.scrollTop=logEl.scrollHeight;
+}
+
+/* ===================== 되돌리기/리셋/뒤집기 ===================== */
+function undo(){
+  if(gameOver) return;
+  const last=history.pop(); if(!last) return;
+  state.board=last.before; state.turn=last.turn; checkSquare=null; mateSquare=null;
+  clearSel(); draw();
+  if(logEl.lastChild) logEl.removeChild(logEl.lastChild);
+}
+function reset(){
+  state=initState(); history=[]; clearSel(); checkSquare=null; mateSquare=null; gameOver=false; logEl.innerHTML='';
+  statusEl.textContent='백 차례 (White to move)'; draw();
+}
+function flip(){ flipped=!flipped; draw(); }
+
+/* ===================== 체크/메이트 평가 & UI ===================== */
+function evaluateTurn(){
+  const toMove=state.turn;
+  const foe = toMove==='w'?'b':'w';
+  const k=findKing(state,toMove);
+  const isCheck=inCheck(state,toMove);
+  checkSquare = isCheck ? k : null;
+  mateSquare = null;
+
+  const moves=allLegalMovesOf(toMove);
+  const hasMove = moves.length>0;
+
+  if(!hasMove){
+    if(isCheck){
+      // 체크메이트: 가운데 모달 + 왕칸 초록 + 게임 종료
+      gameOver = true;
+      ping(160);
+      mateSquare = k;
+      statusEl.textContent = '';
+      showResult('체크메이트!', `${foe==='w'?'백':'흑'} 승리`);
+    }else{
+      ping(160);
+      gameOver = true;
+      statusEl.textContent = '';
+      showResult('무승부', '스테일메이트');
+    }
+  }else{
+    let s = (toMove==='w'?'백':'흑')+' 차례';
+    if(isCheck) {s += ' — 체크!'; ping(160);}
+    statusEl.textContent = s + (toMove==='w'?' (White to move)':' (Black to move)');
+  }
+}
+
+/* 결과 모달(가운데) */
+function showResult(title, subtitle){
+  const overlay=document.createElement('div'); overlay.className='overlay result';
+  const card=document.createElement('div'); card.className='card';
+  const h2=document.createElement('h2'); h2.textContent=title;
+  const p=document.createElement('p'); p.textContent=subtitle;
+  const btn1=document.createElement('button'); btn1.textContent='리셋'; btn1.addEventListener('click',()=>{ overlay.remove(); reset(); });
+  const btn2=document.createElement('button'); btn2.textContent='닫기'; btn2.addEventListener('click',()=>overlay.remove());
+  card.append(h2,p,btn1,btn2); overlay.appendChild(card); boardEl.appendChild(overlay);
+}
+
+/* 프로모션 모달 */
+function showPromotion(color, onPick){
+  const overlay=document.createElement('div'); overlay.className='overlay promo';
+  const card=document.createElement('div'); card.className='card';
+  const h2=document.createElement('h2'); h2.textContent='프로모션할 기물을 선택하세요';
+  const choices=['Q','R','B','N'];
+  card.appendChild(h2);
+  choices.forEach(t=>{
+    const b=document.createElement('button'); b.textContent=UNI[color][t];
+    b.title=({Q:'퀸',R:'룩',B:'비숍',N:'나이트'})[t];
+    b.addEventListener('click',()=>{ overlay.remove(); onPick(t); });
+    card.appendChild(b);
+  });
+  overlay.appendChild(card); boardEl.appendChild(overlay);
+}
+
+/* ===================== 색상: 바인딩 & 초기화 ===================== */
+function setCSS(varName, value){ document.documentElement.style.setProperty(varName, value); }
+function applyPickerVars(){
+  setCSS('--light', lightPicker.value);
+  setCSS('--dark', darkPicker.value);
+  setCSS('--piece-white', whitePiecePicker.value);
+  setCSS('--piece-black', blackPiecePicker.value);
+}
+function bindColorPickers(){
+  [lightPicker, darkPicker, whitePiecePicker, blackPiecePicker].forEach(inp=>{
+    inp.addEventListener('input', applyPickerVars);
+  });
+}
+function resetColors(){
+  lightPicker.value = COLOR_DEFAULTS.light;
+  darkPicker.value  = COLOR_DEFAULTS.dark;
+  whitePiecePicker.value = COLOR_DEFAULTS.w;
+  blackPiecePicker.value = COLOR_DEFAULTS.b;
+  applyPickerVars();
+}
+
+/* 이벤트 */
+undoBtn.addEventListener('click', undo);
+resetBtn.addEventListener('click', reset);
+flipBtn.addEventListener('click', flip);
+resetColorsBtn.addEventListener('click', resetColors);
+soundToggleBtn.addEventListener('click', toggleSound);
+
+/* 시작 */
+reset();
+bindColorPickers();
+applyPickerVars(); // 초기값 반영
+</script>
+</body>
+</html>
