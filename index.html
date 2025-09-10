@@ -1,11 +1,10 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1748676401736913"
-     crossorigin="anonymous"></script>  
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1748676401736913" crossorigin="anonymous"></script>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>2인용 체스 (색상 초기화 + 소리 토글)</title>
+<title>2인용 체스 (색상 초기화 + 소리 토글 + AI)</title>
 <style>
   :root{
     --board-size: 800px;
@@ -25,7 +24,7 @@
   .btns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
   button{background:#1f2937;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700}
   button:hover{background:#0b7285;border-color:#0b7285}
-  .log{height:calc(var(--board-size) - 220px);overflow:auto;background:#0b0f1a;border:1px solid #1e293b;border-radius:10px;padding:8px;font-family:ui-monospace,Menlo,monospace}
+  .log{height:calc(var(--board-size) - 280px);overflow:auto;background:#0b0f1a;border:1px solid #1e293b;border-radius:10px;padding:8px;font-family:ui-monospace,Menlo,monospace}
   .log div{padding:4px 6px;border-radius:6px}
   .log div:nth-child(odd){background:#0f172a}
 
@@ -56,6 +55,11 @@
 
   .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
   .foot{opacity:.7;font-size:12px;margin-top:8px}
+
+  .ai{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+  .ai .full{grid-column:1/-1}
+  select{background:#0b1220;border:1px solid #1e293b;color:#e2e8f0;border-radius:10px;padding:8px}
+  .muted{opacity:.7}
 </style>
 </head>
 <body>
@@ -63,16 +67,37 @@
     <div class="board" id="board" aria-label="체스 보드"></div>
 
     <div class="panel">
-      <h1>2인용 체스 (made by mtai_tfcs)</h1>
+      <h1> 체크메이트 동아리 체스 사이트(made by mtai_tfcs)</h1>
       <div class="status" id="status">백 차례 (White to move)</div>
 
       <!-- 색상 커스터마이즈 -->
       <div class="colors">
         <div class="color-item"><label>밝은 칸</label><input id="lightColor" type="color" value="#EEEED2" /></div>
         <div class="color-item"><label>어두운 칸</label><input id="darkColor" type="color" value="#769656" /></div>
-        <div class="color-item"><label>백 기물</label><input id="whitePiece" type="color" value="#167215198" /></div>
-        <div class="color-item"><label>흑 기물</label><input id="blackPiece" type="color" value="#606060" /></div>
+        <div class="color-item"><label>백 기물</label><input id="whitePiece" type="color" value="#ffffff" /></div>
+        <div class="color-item"><label>흑 기물</label><input id="blackPiece" type="color" value="#111111" /></div>
       </div>
+
+      <!-- AI 설정 -->
+      <div class="ai">
+        <div>
+          <label class="muted">난이도</label>
+          <select id="aiLevel">
+            <option value="easy">ver1 </option>
+            <option value="medium" selected>ver2 </option>
+            <option value="hard">ver3 </option>
+          </select>
+        </div>
+        <div>
+          <label class="muted">내 색</label>
+          <select id="humanSide">
+            <option value="w" selected>백</option>
+            <option value="b">흑</option>
+          </select>
+        </div>
+        <button id="aiToggleBtn" class="full">🤖 AI 시작</button>
+      </div>
+
       <div class="row">
         <button id="resetColorsBtn">🎨 기본 색으로</button>
         <button id="soundToggleBtn">🔊 소리: 켬</button>
@@ -101,16 +126,16 @@ const resetBtn=document.getElementById('resetBtn');
 const flipBtn=document.getElementById('flipBtn');
 const resetColorsBtn=document.getElementById('resetColorsBtn');
 const soundToggleBtn=document.getElementById('soundToggleBtn');
+const aiToggleBtn=document.getElementById('aiToggleBtn');
+const aiLevelSel=document.getElementById('aiLevel');
+const humanSideSel=document.getElementById('humanSide');
 
 const lightPicker = document.getElementById('lightColor');
 const darkPicker  = document.getElementById('darkColor');
 const whitePiecePicker = document.getElementById('whitePiece');
 const blackPiecePicker = document.getElementById('blackPiece');
 
-const COLOR_DEFAULTS = {
-  light:'#EEEED2', dark:'#769656',
-  w:'#ffffff', b:'#111111'
-};
+const COLOR_DEFAULTS = { light:'#EEEED2', dark:'#769656', w:'#ffffff', b:'#111111' };
 
 let state, selected=null, hints=new Set(), captures=new Set(), history=[], flipped=false;
 let checkSquare=null;   // 체크 중 킹 위치
@@ -124,10 +149,7 @@ let soundOn = true;
 let actx=null;
 function ctx(){
   actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-  // 일부 브라우저에서 첫 사용자 상호작용 후에만 재생 가능 → 보정
-  if (actx.state === 'suspended') {
-    actx.resume().catch(()=>{});
-  }
+  if (actx.state === 'suspended') { actx.resume().catch(()=>{}); }
   return actx;
 }
 function ping(ms=160){
@@ -152,10 +174,9 @@ function thock(ms=120){
     const o = actx.createOscillator();
     const g = actx.createGain();
     const lp = actx.createBiquadFilter();
-    // 짧고 탄력 있는 “탁” 느낌: 사각파 + 저역통과 + 급감소 엔벨롭
     o.type = 'square';
-    o.frequency.setValueAtTime(220, actx.currentTime);          // 낮은 톤 시작
-    o.frequency.exponentialRampToValueAtTime(140, actx.currentTime + ms/1000); // 살짝 내려가며 감김
+    o.frequency.setValueAtTime(220, actx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(140, actx.currentTime + ms/1000);
     g.gain.setValueAtTime(0.0001, actx.currentTime);
     g.gain.exponentialRampToValueAtTime(0.35, actx.currentTime + 0.01);
     g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + ms/1000);
@@ -210,7 +231,6 @@ function draw(){
   if(!gameOver){
     statusEl.textContent = state.turn==='w' ? '백 차례 (White to move)' : '흑 차례 (Black to move)';
   } else {
-    // 게임 끝나면 상태 라벨은 비워둠(모달만 사용)
     statusEl.textContent = '';
   }
 }
@@ -218,6 +238,7 @@ function draw(){
 /* ===================== 입력/선택 ===================== */
 function onSquare(r,c){
   if(gameOver) return;
+  if(isAITurn()) return; // AI 차례에는 클릭 막기
   const here=state.board[r][c];
   if(selected){
     const [sr,sc]=selected;
@@ -234,11 +255,14 @@ function clearSel(){ selected=null; hints.clear(); captures.clear(); }
 
 /* ===================== 이동 생성기(의사합법 + 캐슬링 후보) ===================== */
 function pseudoMoves(r,c){
-  const p=state.board[r][c]; if(!p) return [];
+  return pseudoMovesIn(state,r,c);
+}
+function pseudoMovesIn(s,r,c){
+  const p=s.board[r][c]; if(!p) return [];
   const out=[];
-  const same=(rr,cc)=> state.board[rr]?.[cc]?.c===p.c;
-  const foe =(rr,cc)=> state.board[rr]?.[cc] && state.board[rr][cc].c!==p.c;
-  const empty=(rr,cc)=> !state.board[rr]?.[cc];
+  const same=(rr,cc)=> s.board[rr]?.[cc]?.c===p.c;
+  const foe =(rr,cc)=> s.board[rr]?.[cc] && s.board[rr][cc].c!==p.c;
+  const empty=(rr,cc)=> !s.board[rr]?.[cc];
   const push=(rr,cc,capture=false, special=null)=>{ if(rr<0||rr>7||cc<0||cc>7) return; if(same(rr,cc)) return; out.push({r:rr,c:cc,capture,special}); };
 
   if(p.t==='N'){
@@ -251,15 +275,15 @@ function pseudoMoves(r,c){
       if(!dr && !dc) continue; const rr=r+dr, cc=c+dc; if(rr<0||rr>7||cc<0||cc>7) continue; if(same(rr,cc)) continue; push(rr,cc,!!foe(rr,cc));
     }
     if(!p.moved){
-      if(canCastleSideCandidate(state, p.c, 'king')) push(r,6,false,{castle:'king'});
-      if(canCastleSideCandidate(state, p.c, 'queen')) push(r,2,false,{castle:'queen'});
+      if(canCastleSideCandidate(s, p.c, 'king')) push(r,6,false,{castle:'king'});
+      if(canCastleSideCandidate(s, p.c, 'queen')) push(r,2,false,{castle:'queen'});
     }
   }
   const slide=(dirs)=>{
     for(const [dr,dc] of dirs){
       let rr=r+dr, cc=c+dc;
       while(rr>=0&&rr<8&&cc>=0&&cc<8){
-        if(state.board[rr][cc]){
+        if(s.board[rr][cc]){
           if(foe(rr,cc)) push(rr,cc,true);
           break;
         } else { push(rr,cc,false); }
@@ -277,7 +301,7 @@ function pseudoMoves(r,c){
     if(r===start && empty(r+dir,c) && empty(r+2*dir,c)) push(r+2*dir,c,false);
     for(const dc of [-1,1]){
       const rr=r+dir, cc=c+dc;
-      if(rr>=0&&rr<8&&cc>=0&&cc<8 && state.board[rr][cc] && state.board[rr][cc].c!==p.c) push(rr,cc,true);
+      if(rr>=0&&rr<8&&cc>=0&&cc<8 && s.board[rr][cc] && s.board[rr][cc].c!==p.c) push(rr,cc,true);
     }
   }
   return out;
@@ -362,6 +386,7 @@ function applyMove(s, sr,sc,tr,tc, promotionT=null){
   if(promotionT && piece.t==='P' && (tr===0 || tr===7)){
     ns.board[tr][tc] = {c: piece.c, t: promotionT, moved:true};
   }
+  ns.turn = ns.turn==='w' ? 'b' : 'w';
   return ns;
 }
 
@@ -392,7 +417,28 @@ function allLegalMovesOf(color){
   return res;
 }
 
+/* ======== (AI용) 특정 상태 s에 대한 합법 수 생성 ======== */
+function legalMovesIn(s, color){
+  const result=[];
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p=s.board[r][c]; if(!p || p.c!==color) continue;
+    const pm=pseudoMovesIn(s,r,c);
+    for(const m of pm){
+      if(p.t==='K' && m.special?.castle){
+        if(!canCastle(s, color, m.special.castle)) continue;
+      }
+      const promo = (p.t==='P' && (m.r===0 || m.r===7));
+      const ns=applyMove(s, r,c, m.r,m.c, promo?'Q':null); // 탐색에서는 퀸 승격 가정
+      if(!inCheck(ns, p.c)){
+        result.push({sr:r,sc:c,tr:m.r,tc:m.c,capture:!!m.capture, special:m.special||null, promo:promo});
+      }
+    }
+  }
+  return result;
+}
+
 /* ===================== 실행/히스토리 ===================== */
+let aiAutoQueen=false; // AI가 두는 차례에 승격 시 자동 퀸
 function doMove(sr,sc,tr,tc, meta={}){
   if(gameOver) return;
   const piece=state.board[sr][sc];
@@ -409,7 +455,6 @@ function doMove(sr,sc,tr,tc, meta={}){
 
   const finalize = (extra={})=>{
     pushHistory(sr,sc,tr,tc,captured,state.board[tr][tc],extra);
-    // 둔 직후 “탁” 소리(소리 On일 때만)
     thock(110);
     state.turn = state.turn==='w' ? 'b' : 'w';
     evaluateTurn();
@@ -417,10 +462,15 @@ function doMove(sr,sc,tr,tc, meta={}){
   };
 
   if(piece.t==='P' && (tr===0 || tr===7)){
-    showPromotion(piece.c,(t)=>{
-      state.board[tr][tc]={c:piece.c,t,moved:true};
-      finalize({promotion:t});
-    });
+    if(aiAutoQueen){
+      state.board[tr][tc]={c:piece.c,t:'Q',moved:true};
+      finalize({promotion:'Q'});
+    }else{
+      showPromotion(piece.c,(t)=>{
+        state.board[tr][tc]={c:piece.c,t,moved:true};
+        finalize({promotion:t});
+      });
+    }
     return;
   }
 
@@ -452,6 +502,7 @@ function undo(){
 function reset(){
   state=initState(); history=[]; clearSel(); checkSquare=null; mateSquare=null; gameOver=false; logEl.innerHTML='';
   statusEl.textContent='백 차례 (White to move)'; draw();
+  maybeAIMove(); // 시작하자마자 AI 차례면 두도록
 }
 function flip(){ flipped=!flipped; draw(); }
 
@@ -469,7 +520,6 @@ function evaluateTurn(){
 
   if(!hasMove){
     if(isCheck){
-      // 체크메이트: 가운데 모달 + 왕칸 초록 + 게임 종료
       gameOver = true;
       ping(160);
       mateSquare = k;
@@ -485,6 +535,7 @@ function evaluateTurn(){
     let s = (toMove==='w'?'백':'흑')+' 차례';
     if(isCheck) {s += ' — 체크!'; ping(160);}
     statusEl.textContent = s + (toMove==='w'?' (White to move)':' (Black to move)');
+    maybeAIMove();
   }
 }
 
@@ -523,11 +574,7 @@ function applyPickerVars(){
   setCSS('--piece-white', whitePiecePicker.value);
   setCSS('--piece-black', blackPiecePicker.value);
 }
-function bindColorPickers(){
-  [lightPicker, darkPicker, whitePiecePicker, blackPiecePicker].forEach(inp=>{
-    inp.addEventListener('input', applyPickerVars);
-  });
-}
+function bindColorPickers(){ [lightPicker, darkPicker, whitePiecePicker, blackPiecePicker].forEach(inp=> inp.addEventListener('input', applyPickerVars)); }
 function resetColors(){
   lightPicker.value = COLOR_DEFAULTS.light;
   darkPicker.value  = COLOR_DEFAULTS.dark;
@@ -536,18 +583,159 @@ function resetColors(){
   applyPickerVars();
 }
 
-/* 이벤트 */
-undoBtn.addEventListener('click', undo);
-resetBtn.addEventListener('click', reset);
+/* ===================== AI 로직 ===================== */
+let aiEnabled=false;
+let humanSide='w'; // 사람이 두는 색
+let aiTimer=null;
+
+function isAITurn(){
+  const aiSide = (humanSide==='w') ? 'b' : 'w';
+  return aiEnabled && !gameOver && state.turn===aiSide;
+}
+function maybeAIMove(){
+  if(!isAITurn()) return;
+  if(aiTimer) return;
+  aiTimer = setTimeout(()=>{
+    aiTimer=null;
+    const aiSide = state.turn;
+    const level = aiLevelSel.value;
+    const move = chooseAIMove(level, aiSide);
+    if(move){
+      aiAutoQueen = true;
+      doMove(move.sr, move.sc, move.tr, move.tc, {});
+      aiAutoQueen = false;
+    }else{
+      // 수가 없으면 evaluateTurn에서 처리됨
+    }
+  }, 800);
+}
+
+/* 평가 함수 */
+const PIECE_VAL = {K:10000,Q:900,R:500,B:330,N:320,P:100};
+function evaluateBoardSimple(s, pov='w'){
+  // 말가치 + 활동성 + 체크 보너스(작게)
+  let score=0;
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p=s.board[r][c];
+    if(!p) continue;
+    const sign = (p.c==='w')? 1 : -1;
+    score += sign * PIECE_VAL[p.t];
+  }
+  // 활동성
+  const wMoves = legalMovesIn(s,'w').length;
+  const bMoves = legalMovesIn(s,'b').length;
+  score += 0.05 * (wMoves - bMoves);
+  // 체크 보너스/패널티
+  if(inCheck(s,'b')) score += 10;
+  if(inCheck(s,'w')) score -= 10;
+  return (pov==='w') ? score : -score;
+}
+
+/* 난이도별 수 선택 */
+function chooseAIMove(level, color){
+  const moves = legalMovesIn(state, color);
+  if(moves.length===0) return null;
+
+  if(level==='easy'){
+    return moves[(Math.random()*moves.length)|0];
+  }
+
+  if(level==='medium'){
+    // 1플라이 휴리스틱: 잡기/체크/프로모션 가중
+    let best=null, bestScore=-1e9;
+    for(const m of moves){
+      let score=0;
+      const target = state.board[m.tr][m.tc];
+      if(target) score += PIECE_VAL[target.t] * 1.1; // 잡기 가치
+      // 결과 체크/메이트 가중
+      const promo = m.promo ? 900 : 0;
+      const ns = applyMove(state, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+      if(inCheck(ns, ns.turn)) score += 25; // 상대에게 체크
+      score += promo;
+      // 말 전개 소폭
+      score += (m.sr===6 && state.board[m.sr][m.sc].t==='P') ? 2 : 0;
+      if(score>bestScore){ bestScore=score; best=m; }
+    }
+    return best || moves[0];
+  }
+
+  // hard: 미니맥스(깊이 3) + 알파베타
+  const maxDepth=3;
+  const pov=color;
+
+  function minimax(s, depth, alpha, beta, maximizing){
+    const side = maximizing ? pov : (pov==='w'?'b':'w');
+    if(depth===0){ return evaluateBoardSimple(s, pov); }
+
+    const lm = legalMovesIn(s, side);
+    if(lm.length===0){
+      // 체크메이트/스테일
+      if(inCheck(s, side)) return maximizing ? -99999 : 99999;
+      return 0;
+    }
+
+    if(maximizing){
+      let value=-1e9;
+      for(const m of lm){
+        const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+        const v = minimax(ns, depth-1, alpha, beta, false);
+        value = Math.max(value, v);
+        alpha = Math.max(alpha, value);
+        if(beta<=alpha) break;
+      }
+      return value;
+    }else{
+      let value=1e9;
+      for(const m of lm){
+        const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+        const v = minimax(ns, depth-1, alpha, beta, true);
+        value = Math.min(value, v);
+        beta = Math.min(beta, value);
+        if(beta<=alpha) break;
+      }
+      return value;
+    }
+  }
+
+  let best=null, bestScore=-1e9;
+  const rootMoves = moves.slice().sort((a,b)=>{
+    // move ordering: captures/promotions first
+    const av = (state.board[a.tr][a.tc]?.t ? PIECE_VAL[state.board[a.tr][a.tc].t] : 0) + (a.promo?900:0);
+    const bv = (state.board[b.tr][b.tc]?.t ? PIECE_VAL[state.board[b.tr][b.tc].t] : 0) + (b.promo?900:0);
+    return bv-av;
+  });
+
+  for(const m of rootMoves){
+    const ns = applyMove(state, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+    const score = minimax(ns, maxDepth-1, -1e9, 1e9, false);
+    if(score>bestScore){ bestScore=score; best=m; }
+  }
+  return best || moves[0];
+}
+
+/* ===================== 이벤트 ===================== */
+undoBtn.addEventListener('click', ()=>{ if(aiTimer){clearTimeout(aiTimer); aiTimer=null;} undo(); maybeAIMove(); });
+resetBtn.addEventListener('click', ()=>{ if(aiTimer){clearTimeout(aiTimer); aiTimer=null;} reset(); });
 flipBtn.addEventListener('click', flip);
 resetColorsBtn.addEventListener('click', resetColors);
 soundToggleBtn.addEventListener('click', toggleSound);
+
+aiToggleBtn.addEventListener('click', ()=>{
+  aiEnabled = !aiEnabled;
+  aiToggleBtn.textContent = aiEnabled ? '⏸ AI 중지' : '🤖 AI 시작';
+  maybeAIMove();
+});
+humanSideSel.addEventListener('change', (e)=>{
+  humanSide = e.target.value;
+  maybeAIMove();
+});
 
 /* 시작 */
 reset();
 bindColorPickers();
 applyPickerVars(); // 초기값 반영
+humanSide = humanSideSel.value;
+
 </script>
 </body>
 </html>
-
