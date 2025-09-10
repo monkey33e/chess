@@ -20,7 +20,8 @@
   .wrap{display:grid;grid-template-columns:var(--board-size) 360px;gap:20px;padding:24px;align-items:start}
   .panel{background:#111827;border:1px solid #1f2937;border-radius:16px;padding:16px;box-shadow:0 10px 30px #0006}
   h1{font-size:20px;margin:0 0 12px;color:#f8fafc}
-  .status{margin:6px 0 12px;font-weight:800;min-height:1.2em}
+  .status{margin:6px 0 8px;font-weight:800;min-height:1.2em}
+  .score{font-weight:800;margin:6px 0 12px;letter-spacing:.2px}
   .btns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
   button{background:#1f2937;border:1px solid #334155;color:#e2e8f0;padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700}
   button:hover{background:#0b7285;border-color:#0b7285}
@@ -40,7 +41,6 @@
   .sq.capture::before{content:"";position:absolute;inset:12%;border:4px dashed #e03131cc;border-radius:12px;background: var(--capture)}
   .sq.in-check{box-shadow:inset 0 0 0 5px #ff2b2bcc, 0 0 20px #ff2b2b66}
   .sq.mate-king{box-shadow:inset 0 0 0 5px var(--mate-ring), 0 0 20px #22c55e99}
-  /* 🔵 새로 추가: 직전 출발 칸 파란 테두리 */
   .sq.prev{ box-shadow: inset 0 0 0 5px #3b82f6cc, 0 0 14px #3b82f666; }
 
   .overlay{position:absolute;inset:0;background:#0008;display:grid;place-items:center;z-index:5}
@@ -71,6 +71,9 @@
     <div class="panel">
       <h1> 체크메이트 동아리 체스 사이트(made by mtai_tfcs)</h1>
       <div class="status" id="status">백 차례 (White to move)</div>
+
+      <!-- 표시용 재료점수 -->
+      <div class="score" id="materialScore">백 39 | 흑 39 — 동점</div>
 
       <!-- 색상 커스터마이즈 -->
       <div class="colors">
@@ -124,6 +127,7 @@ const ranks=[8,7,6,5,4,3,2,1];
 const boardEl=document.getElementById('board');
 const statusEl=document.getElementById('status');
 const logEl=document.getElementById('log');
+const materialEl=document.getElementById('materialScore');
 
 const undoBtn=document.getElementById('undoBtn');
 const resetBtn=document.getElementById('resetBtn');
@@ -143,14 +147,13 @@ const COLOR_DEFAULTS = { light:'#EEEED2', dark:'#769656', w:'#ffffff', b:'#11111
 
 let state, selected=null, hints=new Set(), captures=new Set(), history=[], flipped=false;
 let checkSquare=null;   // 체크 중 킹 위치
-let mateSquare=null;    // 메이트된 킹 위치(초록)
+let mateSquare=null;    // 메이트된 킹 위치
 let gameOver=false;
-/* 🔵 추가: 직전 출발 칸 저장용 */
 let lastFrom=null;
 
 const UNI={ w:{K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙'}, b:{K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'} };
 
-/* ===================== 오디오: “탁” 소리 & 토글 ===================== */
+/* ===================== 오디오 ===================== */
 let soundOn = true;
 let actx=null;
 function ctx(){
@@ -229,9 +232,7 @@ function draw(){
       const k=`${r}-${c}`; if(hints.has(k)) sq.classList.add('hint'); if(captures.has(k)) sq.classList.add('capture');
       if(mateSquare && mateSquare.r===r && mateSquare.c===c) sq.classList.add('mate-king');
       else if(checkSquare && checkSquare.r===r && checkSquare.c===c) sq.classList.add('in-check');
-      /* 🔵 추가: 직전 출발 칸 표시 */
       if(lastFrom && lastFrom.r===r && lastFrom.c===c) sq.classList.add('prev');
-
       sq.addEventListener('click',()=>onSquare(r,c));
       boardEl.appendChild(sq);
     }
@@ -241,12 +242,13 @@ function draw(){
   } else {
     statusEl.textContent = '';
   }
+  renderMaterial(); // 재료점수 갱신
 }
 
 /* ===================== 입력/선택 ===================== */
 function onSquare(r,c){
   if(gameOver) return;
-  if(isAITurn()) return; // AI 차례에는 클릭 막기
+  if(isAITurn()) return;
   const here=state.board[r][c];
   if(selected){
     const [sr,sc]=selected;
@@ -257,14 +259,11 @@ function onSquare(r,c){
   if(here && here.c===state.turn){ selected=[r,c]; setHints(getLegalMovesFiltered(r,c)); draw(); }
   else { clearSel(); draw(); }
 }
-
 function setHints(moves){ hints.clear(); captures.clear(); moves.forEach(m=>{const k=`${m.r}-${m.c}`; (m.capture?captures:hints).add(k);}); }
 function clearSel(){ selected=null; hints.clear(); captures.clear(); }
 
 /* ===================== 이동 생성기(의사합법 + 캐슬링 후보) ===================== */
-function pseudoMoves(r,c){
-  return pseudoMovesIn(state,r,c);
-}
+function pseudoMoves(r,c){ return pseudoMovesIn(state,r,c); }
 function pseudoMovesIn(s,r,c){
   const p=s.board[r][c]; if(!p) return [];
   const out=[];
@@ -436,7 +435,7 @@ function legalMovesIn(s, color){
         if(!canCastle(s, color, m.special.castle)) continue;
       }
       const promo = (p.t==='P' && (m.r===0 || m.r===7));
-      const ns=applyMove(s, r,c, m.r,m.c, promo?'Q':null); // 탐색에서는 퀸 승격 가정
+      const ns=applyMove(s, r,c, m.r,m.c, promo?'Q':null);
       if(!inCheck(ns, p.c)){
         result.push({sr:r,sc:c,tr:m.r,tc:m.c,capture:!!m.capture, special:m.special||null, promo:promo});
       }
@@ -446,13 +445,12 @@ function legalMovesIn(s, color){
 }
 
 /* ===================== 실행/히스토리 ===================== */
-let aiAutoQueen=false; // AI가 두는 차례에 승격 시 자동 퀸
+let aiAutoQueen=false;
 function doMove(sr,sc,tr,tc, meta={}){
   if(gameOver) return;
   const piece=state.board[sr][sc];
   const captured=state.board[tr][tc] ? {...state.board[tr][tc]} : null;
 
-  /* 🔵 추가: 보드 갱신 전에 직전 출발 칸 저장 */
   lastFrom = { r: sr, c: sc };
 
   state.board[tr][tc]={...piece,moved:true};
@@ -507,17 +505,15 @@ function undo(){
   if(gameOver) return;
   const last=history.pop(); if(!last) return;
   state.board=last.before; state.turn=last.turn; checkSquare=null; mateSquare=null;
-  /* 🔵 추가: 표시 초기화 */
   lastFrom = null;
   clearSel(); draw();
   if(logEl.lastChild) logEl.removeChild(logEl.lastChild);
 }
 function reset(){
   state=initState(); history=[]; clearSel(); checkSquare=null; mateSquare=null; gameOver=false; logEl.innerHTML='';
-  /* 🔵 추가: 표시 초기화 */
   lastFrom = null;
   statusEl.textContent='백 차례 (White to move)'; draw();
-  maybeAIMove(); // 시작하자마자 AI 차례면 두도록
+  maybeAIMove();
 }
 function flip(){ flipped=!flipped; draw(); }
 
@@ -598,25 +594,31 @@ function resetColors(){
   applyPickerVars();
 }
 
-/* ===================== (기존) 간단 평가 ===================== */
-const PIECE_VAL = {K:10000,Q:900,R:500,B:330,N:320,P:100};
-function evaluateBoardSimple(s, pov='w'){
-  let score=0;
+/* ===================== 엔진 내부 평가용 값(기존) ===================== */
+const PIECE_VAL = {K:10000,Q:900,R:500,B:330,N:320,P:100}; // 엔진용
+
+/* ===================== 표시용 재료점수 값(요청값) ===================== */
+const MATERIAL_VAL = {Q:8, R:5, B:3, N:3, P:1, K:0}; // 킹은 표시에서 제외(0)
+
+/* ===== 재료점수 계산/표시 ===== */
+function calcMaterial(s){
+  let w=0, b=0;
   for(let r=0;r<8;r++) for(let c=0;c<8;c++){
-    const p=s.board[r][c];
-    if(!p) continue;
-    const sign = (p.c==='w')? 1 : -1;
-    score += sign * PIECE_VAL[p.t];
+    const p=s.board[r][c]; if(!p) continue;
+    if(p.t==='K') continue; // 킹 제외
+    const v = MATERIAL_VAL[p.t] || 0;
+    if(p.c==='w') w += v; else b += v;
   }
-  const wMoves = legalMovesIn(s,'w').length;
-  const bMoves = legalMovesIn(s,'b').length;
-  score += 0.05 * (wMoves - bMoves);
-  if(inCheck(s,'b')) score += 10;
-  if(inCheck(s,'w')) score -= 10;
-  return (pov==='w') ? score : -score;
+  return {w,b,diff:w-b};
+}
+function renderMaterial(){
+  if(!materialEl) return;
+  const {w,b,diff} = calcMaterial(state);
+  const tag = diff>0 ? `백 +${diff}` : diff<0 ? `흑 +${-diff}` : '동점';
+  materialEl.textContent = `백 ${w} | 흑 ${b} — ${tag}`;
 }
 
-/* ======== 고급 평가: PST + 구조 + 활동성 + 킹 안전/템포 ======== */
+/* ======== 고급 평가(엔진) ======== */
 const PST = {
   P: [
     [0,0,0,0,0,0,0,0],
@@ -688,14 +690,12 @@ function pstScore(t, color, r, c){
 }
 function evaluateBoard(s, pov='w'){
   let score=0;
-
   for(let r=0;r<8;r++) for(let c=0;c<8;c++){
     const p=s.board[r][c];
     if(!p) continue;
     const sign = (p.c==='w')? 1 : -1;
     score += sign * (PIECE_VAL[p.t] + pstScore(p.t, p.c, r, c));
   }
-
   function pawnStruct(color){
     const dir = color==='w' ? -1 : 1;
     const pawns = [];
@@ -714,7 +714,6 @@ function evaluateBoard(s, pov='w'){
       const hasLeft = pawns.some(([_,cc])=> cc===c-1);
       const hasRight= pawns.some(([_,cc])=> cc===c+1);
       if(!hasLeft && !hasRight) val -= 10; // 고립
-      // 통과폰(앞에 상대 폰 없으면 보너스)
       let blocked=false;
       for(let rr=r+dir; rr>=0 && rr<8; rr+=dir){
         const op = s.board[rr][c];
@@ -726,19 +725,16 @@ function evaluateBoard(s, pov='w'){
   }
   score += pawnStruct('w');
   score -= pawnStruct('b');
-
   const wMoves = legalMovesIn(s,'w').length;
   const bMoves = legalMovesIn(s,'b').length;
   score += 0.1 * (wMoves - bMoves);
   if(inCheck(s,'b')) score += 20;
   if(inCheck(s,'w')) score -= 20;
-
   if(s.turn==='w') score += 3; else score -= 3;
-
   return (pov==='w') ? score : -score;
 }
 
-/* ======== 탐색 보조: 키/TT/무브오더/쿼아이선스/ID ======== */
+/* ======== 탐색 보조 ======== */
 function boardKey(s){
   let k = s.turn==='w'?'w':'b';
   for(let r=0;r<8;r++){
@@ -750,9 +746,9 @@ function boardKey(s){
   }
   return k;
 }
-const TT = new Map(); // key -> {depth, score, flag, move}
-const KILLERS = [];   // killers[ply] = [m0,m1]
-const HISTORY = new Map(); // "sr,sc->tr,tc" -> score
+const TT = new Map();
+const KILLERS = [];
+const HISTORY = new Map();
 let NODES = 0;
 
 function mvvLvaScore(capturedType, attackerType){
@@ -817,8 +813,8 @@ function alphaBeta(s, depth, alpha, beta, pov, ply){
   const side = s.turn;
   const moves = legalMovesIn(s, side);
   if(moves.length===0){
-    if(inCheck(s, side)) return -99999 + ply; // 체크메이트(지연 보상)
-    return 0; // 스테일
+    if(inCheck(s, side)) return -99999 + ply;
+    return 0;
   }
 
   let bestScore = -1e9, bestMove = null;
@@ -846,9 +842,9 @@ function alphaBeta(s, depth, alpha, beta, pov, ply){
     }
   }
 
-  let flag = 0; // exact
-  if(bestScore <= originalAlpha) flag = 2; // upper (fail-low)
-  else if(bestScore >= originalBeta) flag = 1; // lower (fail-high)
+  let flag = 0;
+  if(bestScore <= originalAlpha) flag = 2;
+  else if(bestScore >= originalBeta) flag = 1;
   TT.set(key, {depth, score: bestScore, flag, move: bestMove});
   return bestScore;
 }
@@ -903,7 +899,7 @@ function iterativeDeepeningChooseMove(s, color, timeMs=1200, maxDepth=6){
 
 /* ===================== AI 로직 ===================== */
 let aiEnabled=false;
-let humanSide='w'; // 사람이 두는 색
+let humanSide='w';
 let aiTimer=null;
 
 function isAITurn(){
@@ -923,7 +919,6 @@ function maybeAIMove(){
       doMove(move.sr, move.sc, move.tr, move.tc, {});
       aiAutoQueen = false;
 
-      // 탐색 정보 로그
       if(level==='expert' || level==='grandmaster'){
         const info = document.createElement('div');
         info.textContent = `AI 탐색 노드 ≈ ${NODES.toLocaleString()}`;
@@ -992,6 +987,21 @@ function chooseAIMove(level, color){
         return value;
       }
     }
+    function evaluateBoardSimple(s, pov='w'){
+      let score=0;
+      for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+        const p=s.board[r][c];
+        if(!p) continue;
+        const sign = (p.c==='w')? 1 : -1;
+        score += sign * PIECE_VAL[p.t];
+      }
+      const wMoves = legalMovesIn(s,'w').length;
+      const bMoves = legalMovesIn(s,'b').length;
+      score += 0.05 * (wMoves - bMoves);
+      if(inCheck(s,'b')) score += 10;
+      if(inCheck(s,'w')) score -= 10;
+      return (pov==='w') ? score : -score;
+    }
     let best=null, bestScore=-1e9;
     const rootMoves = moves.slice().sort((a,b)=>{
       const av = (state.board[a.tr][a.tc]?.t ? PIECE_VAL[state.board[a.tr][a.tc].t] : 0) + (a.promo?900:0);
@@ -1006,11 +1016,11 @@ function chooseAIMove(level, color){
     return best || moves[0];
   }
 
-  if(level==='expert'){ // ver4
+  if(level==='expert'){
     return iterativeDeepeningChooseMove(state, color, 1200, 6);
   }
 
-  if(level==='grandmaster'){ // ver5
+  if(level==='grandmaster'){
     return iterativeDeepeningChooseMove(state, color, 2000, 8);
   }
 
@@ -1037,7 +1047,7 @@ humanSideSel.addEventListener('change', (e)=>{
 /* 시작 */
 reset();
 bindColorPickers();
-applyPickerVars(); // 초기값 반영
+applyPickerVars();
 humanSide = humanSideSel.value;
 
 </script>
