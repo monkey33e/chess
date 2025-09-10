@@ -40,6 +40,8 @@
   .sq.capture::before{content:"";position:absolute;inset:12%;border:4px dashed #e03131cc;border-radius:12px;background: var(--capture)}
   .sq.in-check{box-shadow:inset 0 0 0 5px #ff2b2bcc, 0 0 20px #ff2b2b66}
   .sq.mate-king{box-shadow:inset 0 0 0 5px var(--mate-ring), 0 0 20px #22c55e99}
+  /* 🔵 새로 추가: 직전 출발 칸 파란 테두리 */
+  .sq.prev{ box-shadow: inset 0 0 0 5px #3b82f6cc, 0 0 14px #3b82f666; }
 
   .overlay{position:absolute;inset:0;background:#0008;display:grid;place-items:center;z-index:5}
   .card{background:#0b0f1a;border:1px solid #1e293b;border-radius:12px;padding:14px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center;min-width:260px}
@@ -83,9 +85,11 @@
         <div>
           <label class="muted">난이도</label>
           <select id="aiLevel">
-            <option value="easy">ver1 </option>
-            <option value="medium" selected>ver2 </option>
-            <option value="hard">ver3 </option>
+            <option value="easy">ver1</option>
+            <option value="medium" selected>ver2</option>
+            <option value="hard">ver3</option>
+            <option value="expert">ver4</option>
+            <option value="grandmaster">ver5(시간 소요)</option>
           </select>
         </div>
         <div>
@@ -141,6 +145,8 @@ let state, selected=null, hints=new Set(), captures=new Set(), history=[], flipp
 let checkSquare=null;   // 체크 중 킹 위치
 let mateSquare=null;    // 메이트된 킹 위치(초록)
 let gameOver=false;
+/* 🔵 추가: 직전 출발 칸 저장용 */
+let lastFrom=null;
 
 const UNI={ w:{K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙'}, b:{K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'} };
 
@@ -223,6 +229,8 @@ function draw(){
       const k=`${r}-${c}`; if(hints.has(k)) sq.classList.add('hint'); if(captures.has(k)) sq.classList.add('capture');
       if(mateSquare && mateSquare.r===r && mateSquare.c===c) sq.classList.add('mate-king');
       else if(checkSquare && checkSquare.r===r && checkSquare.c===c) sq.classList.add('in-check');
+      /* 🔵 추가: 직전 출발 칸 표시 */
+      if(lastFrom && lastFrom.r===r && lastFrom.c===c) sq.classList.add('prev');
 
       sq.addEventListener('click',()=>onSquare(r,c));
       boardEl.appendChild(sq);
@@ -326,14 +334,14 @@ function canCastle(s, color, side){
   if(inCheck(s, color)) return false;
   if(!canCastleSideCandidate(s, color, side)) return false;
   const row = (color==='w') ? 7 : 0;
-  const foe = (color==='w') ? 'b' : 'w';
+  const foeC = (color==='w') ? 'b' : 'w';
   if(side==='king'){
-    if(squareAttackedBy(s, foe, row, 5)) return false;
-    if(squareAttackedBy(s, foe, row, 6)) return false;
+    if(squareAttackedBy(s, foeC, row, 5)) return false;
+    if(squareAttackedBy(s, foeC, row, 6)) return false;
     return true;
   } else {
-    if(squareAttackedBy(s, foe, row, 3)) return false;
-    if(squareAttackedBy(s, foe, row, 2)) return false;
+    if(squareAttackedBy(s, foeC, row, 3)) return false;
+    if(squareAttackedBy(s, foeC, row, 2)) return false;
     return true;
   }
 }
@@ -444,6 +452,9 @@ function doMove(sr,sc,tr,tc, meta={}){
   const piece=state.board[sr][sc];
   const captured=state.board[tr][tc] ? {...state.board[tr][tc]} : null;
 
+  /* 🔵 추가: 보드 갱신 전에 직전 출발 칸 저장 */
+  lastFrom = { r: sr, c: sc };
+
   state.board[tr][tc]={...piece,moved:true};
   state.board[sr][sc]=null;
 
@@ -496,11 +507,15 @@ function undo(){
   if(gameOver) return;
   const last=history.pop(); if(!last) return;
   state.board=last.before; state.turn=last.turn; checkSquare=null; mateSquare=null;
+  /* 🔵 추가: 표시 초기화 */
+  lastFrom = null;
   clearSel(); draw();
   if(logEl.lastChild) logEl.removeChild(logEl.lastChild);
 }
 function reset(){
   state=initState(); history=[]; clearSel(); checkSquare=null; mateSquare=null; gameOver=false; logEl.innerHTML='';
+  /* 🔵 추가: 표시 초기화 */
+  lastFrom = null;
   statusEl.textContent='백 차례 (White to move)'; draw();
   maybeAIMove(); // 시작하자마자 AI 차례면 두도록
 }
@@ -583,6 +598,309 @@ function resetColors(){
   applyPickerVars();
 }
 
+/* ===================== (기존) 간단 평가 ===================== */
+const PIECE_VAL = {K:10000,Q:900,R:500,B:330,N:320,P:100};
+function evaluateBoardSimple(s, pov='w'){
+  let score=0;
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p=s.board[r][c];
+    if(!p) continue;
+    const sign = (p.c==='w')? 1 : -1;
+    score += sign * PIECE_VAL[p.t];
+  }
+  const wMoves = legalMovesIn(s,'w').length;
+  const bMoves = legalMovesIn(s,'b').length;
+  score += 0.05 * (wMoves - bMoves);
+  if(inCheck(s,'b')) score += 10;
+  if(inCheck(s,'w')) score -= 10;
+  return (pov==='w') ? score : -score;
+}
+
+/* ======== 고급 평가: PST + 구조 + 활동성 + 킹 안전/템포 ======== */
+const PST = {
+  P: [
+    [0,0,0,0,0,0,0,0],
+    [50,50,50,50,50,50,50,50],
+    [10,10,20,30,30,20,10,10],
+    [5,5,10,25,25,10,5,5],
+    [0,0,0,20,20,0,0,0],
+    [5,-5,-10,0,0,-10,-5,5],
+    [5,10,10,-20,-20,10,10,5],
+    [0,0,0,0,0,0,0,0]
+  ],
+  N: [
+    [-50,-40,-30,-30,-30,-30,-40,-50],
+    [-40,-20,0,0,0,0,-20,-40],
+    [-30,0,10,15,15,10,0,-30],
+    [-30,5,15,20,20,15,5,-30],
+    [-30,0,15,20,20,15,0,-30],
+    [-30,5,10,15,15,10,5,-30],
+    [-40,-20,0,5,5,0,-20,-40],
+    [-50,-40,-30,-30,-30,-30,-40,-50]
+  ],
+  B: [
+    [-20,-10,-10,-10,-10,-10,-10,-20],
+    [-10,0,0,0,0,0,0,-10],
+    [-10,0,5,10,10,5,0,-10],
+    [-10,5,5,10,10,5,5,-10],
+    [-10,0,10,10,10,10,0,-10],
+    [-10,10,10,10,10,10,10,-10],
+    [-10,5,0,0,0,0,5,-10],
+    [-20,-10,-10,-10,-10,-10,-10,-20]
+  ],
+  R: [
+    [0,0,0,5,5,0,0,0],
+    [-5,0,0,0,0,0,0,-5],
+    [-5,0,0,0,0,0,0,-5],
+    [-5,0,0,0,0,0,0,-5],
+    [-5,0,0,0,0,0,0,-5],
+    [-5,0,0,0,0,0,0,-5],
+    [5,10,10,10,10,10,10,5],
+    [0,0,0,0,0,0,0,0]
+  ],
+  Q: [
+    [-20,-10,-10,-5,-5,-10,-10,-20],
+    [-10,0,0,0,0,0,0,-10],
+    [-10,0,5,5,5,5,0,-10],
+    [-5,0,5,5,5,5,0,-5],
+    [0,0,5,5,5,5,0,-5],
+    [-10,5,5,5,5,5,0,-10],
+    [-10,0,5,0,0,0,0,-10],
+    [-20,-10,-10,-5,-5,-10,-10,-20]
+  ],
+  K: [
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-30,-40,-40,-50,-50,-40,-40,-30],
+    [-20,-30,-30,-40,-40,-30,-30,-20],
+    [-10,-20,-20,-20,-20,-20,-20,-10],
+    [20,20,0,0,0,0,20,20],
+    [20,30,10,0,0,10,30,20]
+  ]
+};
+function pstScore(t, color, r, c){
+  const rr = color==='w' ? r : 7 - r;
+  const cc = color==='w' ? c : 7 - c;
+  const table = PST[t];
+  if(!table) return 0;
+  return table[rr][cc];
+}
+function evaluateBoard(s, pov='w'){
+  let score=0;
+
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p=s.board[r][c];
+    if(!p) continue;
+    const sign = (p.c==='w')? 1 : -1;
+    score += sign * (PIECE_VAL[p.t] + pstScore(p.t, p.c, r, c));
+  }
+
+  function pawnStruct(color){
+    const dir = color==='w' ? -1 : 1;
+    const pawns = [];
+    for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+      const q=s.board[r][c];
+      if(q && q.c===color && q.t==='P') pawns.push([r,c]);
+    }
+    if(pawns.length===0) return 0;
+    let val = 0;
+    const filesCount = Array(8).fill(0);
+    for(const [,c] of pawns) filesCount[c]++;
+    for(let f=0;f<8;f++){
+      if(filesCount[f]>=2) val -= 12 * (filesCount[f]-1);
+    }
+    for(const [r,c] of pawns){
+      const hasLeft = pawns.some(([_,cc])=> cc===c-1);
+      const hasRight= pawns.some(([_,cc])=> cc===c+1);
+      if(!hasLeft && !hasRight) val -= 10; // 고립
+      // 통과폰(앞에 상대 폰 없으면 보너스)
+      let blocked=false;
+      for(let rr=r+dir; rr>=0 && rr<8; rr+=dir){
+        const op = s.board[rr][c];
+        if(op && op.t==='P' && op.c!==color){ blocked=true; break; }
+      }
+      if(!blocked) val += 8;
+    }
+    return val;
+  }
+  score += pawnStruct('w');
+  score -= pawnStruct('b');
+
+  const wMoves = legalMovesIn(s,'w').length;
+  const bMoves = legalMovesIn(s,'b').length;
+  score += 0.1 * (wMoves - bMoves);
+  if(inCheck(s,'b')) score += 20;
+  if(inCheck(s,'w')) score -= 20;
+
+  if(s.turn==='w') score += 3; else score -= 3;
+
+  return (pov==='w') ? score : -score;
+}
+
+/* ======== 탐색 보조: 키/TT/무브오더/쿼아이선스/ID ======== */
+function boardKey(s){
+  let k = s.turn==='w'?'w':'b';
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const p=s.board[r][c];
+      if(!p){ k+='.'; continue; }
+      k+= p.c + p.t + r + c;
+    }
+  }
+  return k;
+}
+const TT = new Map(); // key -> {depth, score, flag, move}
+const KILLERS = [];   // killers[ply] = [m0,m1]
+const HISTORY = new Map(); // "sr,sc->tr,tc" -> score
+let NODES = 0;
+
+function mvvLvaScore(capturedType, attackerType){
+  if(!capturedType) return 0;
+  return (PIECE_VAL[capturedType] * 10) - PIECE_VAL[attackerType];
+}
+function histKey(m){ return `${m.sr},${m.sc}->${m.tr},${m.tc}`; }
+
+function orderMoves(s, moves, pov, ply){
+  const killers = (KILLERS[ply]||[]);
+  return moves.map(m=>{
+    const target = s.board[m.tr][m.tc];
+    const attacker = s.board[m.sr][m.sc];
+    let score = 0;
+    score += mvvLvaScore(target?.t, attacker.t) + (m.promo?900:0);
+    if(killers[0] && killers[0].sr===m.sr && killers[0].sc===m.sc && killers[0].tr===m.tr && killers[0].tc===m.tc) score += 300;
+    if(killers[1] && killers[1].sr===m.sr && killers[1].sc===m.sc && killers[1].tr===m.tr && killers[1].tc===m.tc) score += 200;
+    score += (HISTORY.get(histKey(m))||0) * 0.01;
+    return {m, score};
+  }).sort((a,b)=> b.score - a.score).map(x=>x.m);
+}
+
+function quiescence(s, alpha, beta, pov){
+  NODES++;
+  const stand = evaluateBoard(s, pov);
+  if(stand >= beta) return beta;
+  if(stand > alpha) alpha = stand;
+
+  const side = s.turn;
+  const moves = legalMovesIn(s, side).filter(m=>{
+    return s.board[m.tr][m.tc] || m.promo;
+  });
+  if(moves.length===0) return stand;
+
+  const ordered = orderMoves(s, moves, pov, 0);
+  for(const m of ordered){
+    const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+    const score = -quiescence(ns, -beta, -alpha, pov);
+    if(score >= beta) return beta;
+    if(score > alpha) alpha = score;
+  }
+  return alpha;
+}
+
+function alphaBeta(s, depth, alpha, beta, pov, ply){
+  NODES++;
+  const originalAlpha = alpha, originalBeta = beta;
+
+  const key = boardKey(s);
+  const tt = TT.get(key);
+  if(tt && tt.depth>=depth){
+    if(tt.flag===0) return tt.score;
+    if(tt.flag===1 && tt.score>alpha) alpha = tt.score;
+    if(tt.flag===2 && tt.score<beta)  beta  = tt.score;
+    if(alpha>=beta) return tt.score;
+  }
+
+  if(depth===0){
+    return quiescence(s, alpha, beta, pov);
+  }
+
+  const side = s.turn;
+  const moves = legalMovesIn(s, side);
+  if(moves.length===0){
+    if(inCheck(s, side)) return -99999 + ply; // 체크메이트(지연 보상)
+    return 0; // 스테일
+  }
+
+  let bestScore = -1e9, bestMove = null;
+  const ordered = orderMoves(s, moves, pov, ply);
+
+  for(const m of ordered){
+    const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+    const score = -alphaBeta(ns, depth-1, -beta, -alpha, pov, ply+1);
+    if(score > bestScore){
+      bestScore = score;
+      bestMove = m;
+    }
+    if(score > alpha){
+      alpha = score;
+      if(alpha >= beta){
+        KILLERS[ply] = KILLERS[ply] || [];
+        if(!KILLERS[ply][0] || !(KILLERS[ply][0].sr===m.sr && KILLERS[ply][0].sc===m.sc && KILLERS[ply][0].tr===m.tr && KILLERS[ply][0].tc===m.tc)){
+          KILLERS[ply][1] = KILLERS[ply][0];
+          KILLERS[ply][0] = m;
+        }
+        const hk = histKey(m);
+        HISTORY.set(hk, (HISTORY.get(hk)||0) + depth*depth);
+        break;
+      }
+    }
+  }
+
+  let flag = 0; // exact
+  if(bestScore <= originalAlpha) flag = 2; // upper (fail-low)
+  else if(bestScore >= originalBeta) flag = 1; // lower (fail-high)
+  TT.set(key, {depth, score: bestScore, flag, move: bestMove});
+  return bestScore;
+}
+
+function iterativeDeepeningChooseMove(s, color, timeMs=1200, maxDepth=6){
+  const pov = color;
+  let bestMove = null;
+  let lastScore = 0;
+  const start = performance.now();
+  NODES = 0;
+
+  const rootMoves = legalMovesIn(s, color);
+  if(rootMoves.length===0) return null;
+
+  let orderedRoot = orderMoves(s, rootMoves, pov, 0);
+
+  for(let depth=1; depth<=maxDepth; depth++){
+    let alpha = -1e9, beta = 1e9;
+
+    if(depth>=3){
+      const asp = 50 + depth*20;
+      alpha = lastScore - asp;
+      beta  = lastScore + asp;
+    }
+
+    let bestScoreThisDepth = -1e9;
+    let bestMoveThisDepth = orderedRoot[0];
+
+    for(const m of orderedRoot){
+      const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+      const score = -alphaBeta(ns, depth-1, -beta, -alpha, pov, 1);
+      if(score > bestScoreThisDepth){
+        bestScoreThisDepth = score;
+        bestMoveThisDepth = m;
+        if(score > alpha) alpha = score;
+      }
+      if(performance.now() - start > timeMs) break;
+    }
+
+    if(performance.now() - start > timeMs){
+      break;
+    }
+
+    bestMove = bestMoveThisDepth;
+    lastScore = bestScoreThisDepth;
+
+    orderedRoot = [bestMove, ...orderedRoot.filter(x => x!==bestMove)];
+  }
+
+  return bestMove || orderedRoot[0];
+}
+
 /* ===================== AI 로직 ===================== */
 let aiEnabled=false;
 let humanSide='w'; // 사람이 두는 색
@@ -604,31 +922,16 @@ function maybeAIMove(){
       aiAutoQueen = true;
       doMove(move.sr, move.sc, move.tr, move.tc, {});
       aiAutoQueen = false;
-    }else{
-      // 수가 없으면 evaluateTurn에서 처리됨
+
+      // 탐색 정보 로그
+      if(level==='expert' || level==='grandmaster'){
+        const info = document.createElement('div');
+        info.textContent = `AI 탐색 노드 ≈ ${NODES.toLocaleString()}`;
+        logEl.appendChild(info);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
     }
   }, 800);
-}
-
-/* 평가 함수 */
-const PIECE_VAL = {K:10000,Q:900,R:500,B:330,N:320,P:100};
-function evaluateBoardSimple(s, pov='w'){
-  // 말가치 + 활동성 + 체크 보너스(작게)
-  let score=0;
-  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
-    const p=s.board[r][c];
-    if(!p) continue;
-    const sign = (p.c==='w')? 1 : -1;
-    score += sign * PIECE_VAL[p.t];
-  }
-  // 활동성
-  const wMoves = legalMovesIn(s,'w').length;
-  const bMoves = legalMovesIn(s,'b').length;
-  score += 0.05 * (wMoves - bMoves);
-  // 체크 보너스/패널티
-  if(inCheck(s,'b')) score += 10;
-  if(inCheck(s,'w')) score -= 10;
-  return (pov==='w') ? score : -score;
 }
 
 /* 난이도별 수 선택 */
@@ -641,76 +944,77 @@ function chooseAIMove(level, color){
   }
 
   if(level==='medium'){
-    // 1플라이 휴리스틱: 잡기/체크/프로모션 가중
     let best=null, bestScore=-1e9;
     for(const m of moves){
       let score=0;
       const target = state.board[m.tr][m.tc];
-      if(target) score += PIECE_VAL[target.t] * 1.1; // 잡기 가치
-      // 결과 체크/메이트 가중
+      if(target) score += PIECE_VAL[target.t] * 1.1;
       const promo = m.promo ? 900 : 0;
       const ns = applyMove(state, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
-      if(inCheck(ns, ns.turn)) score += 25; // 상대에게 체크
+      if(inCheck(ns, ns.turn)) score += 25;
       score += promo;
-      // 말 전개 소폭
       score += (m.sr===6 && state.board[m.sr][m.sc].t==='P') ? 2 : 0;
       if(score>bestScore){ bestScore=score; best=m; }
     }
     return best || moves[0];
   }
 
-  // hard: 미니맥스(깊이 3) + 알파베타
-  const maxDepth=3;
-  const pov=color;
-
-  function minimax(s, depth, alpha, beta, maximizing){
-    const side = maximizing ? pov : (pov==='w'?'b':'w');
-    if(depth===0){ return evaluateBoardSimple(s, pov); }
-
-    const lm = legalMovesIn(s, side);
-    if(lm.length===0){
-      // 체크메이트/스테일
-      if(inCheck(s, side)) return maximizing ? -99999 : 99999;
-      return 0;
-    }
-
-    if(maximizing){
-      let value=-1e9;
-      for(const m of lm){
-        const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
-        const v = minimax(ns, depth-1, alpha, beta, false);
-        value = Math.max(value, v);
-        alpha = Math.max(alpha, value);
-        if(beta<=alpha) break;
+  if(level==='hard'){
+    const maxDepth=3;
+    const pov=color;
+    function minimax(s, depth, alpha, beta, maximizing){
+      const side = maximizing ? pov : (pov==='w'?'b':'w');
+      if(depth===0){ return evaluateBoardSimple(s, pov); }
+      const lm = legalMovesIn(s, side);
+      if(lm.length===0){
+        if(inCheck(s, side)) return maximizing ? -99999 : 99999;
+        return 0;
       }
-      return value;
-    }else{
-      let value=1e9;
-      for(const m of lm){
-        const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
-        const v = minimax(ns, depth-1, alpha, beta, true);
-        value = Math.min(value, v);
-        beta = Math.min(beta, value);
-        if(beta<=alpha) break;
+      if(maximizing){
+        let value=-1e9;
+        for(const m of lm){
+          const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+          const v = minimax(ns, depth-1, alpha, beta, false);
+          value = Math.max(value, v);
+          alpha = Math.max(alpha, value);
+          if(beta<=alpha) break;
+        }
+        return value;
+      }else{
+        let value=1e9;
+        for(const m of lm){
+          const ns = applyMove(s, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+          const v = minimax(ns, depth-1, alpha, beta, true);
+          value = Math.min(value, v);
+          beta = Math.min(beta, value);
+          if(beta<=alpha) break;
+        }
+        return value;
       }
-      return value;
     }
+    let best=null, bestScore=-1e9;
+    const rootMoves = moves.slice().sort((a,b)=>{
+      const av = (state.board[a.tr][a.tc]?.t ? PIECE_VAL[state.board[a.tr][a.tc].t] : 0) + (a.promo?900:0);
+      const bv = (state.board[b.tr][b.tc]?.t ? PIECE_VAL[state.board[b.tr][b.tc].t] : 0) + (b.promo?900:0);
+      return bv-av;
+    });
+    for(const m of rootMoves){
+      const ns = applyMove(state, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
+      const score = minimax(ns, maxDepth-1, -1e9, 1e9, false);
+      if(score>bestScore){ bestScore=score; best=m; }
+    }
+    return best || moves[0];
   }
 
-  let best=null, bestScore=-1e9;
-  const rootMoves = moves.slice().sort((a,b)=>{
-    // move ordering: captures/promotions first
-    const av = (state.board[a.tr][a.tc]?.t ? PIECE_VAL[state.board[a.tr][a.tc].t] : 0) + (a.promo?900:0);
-    const bv = (state.board[b.tr][b.tc]?.t ? PIECE_VAL[state.board[b.tr][b.tc].t] : 0) + (b.promo?900:0);
-    return bv-av;
-  });
-
-  for(const m of rootMoves){
-    const ns = applyMove(state, m.sr,m.sc,m.tr,m.tc, m.promo?'Q':null);
-    const score = minimax(ns, maxDepth-1, -1e9, 1e9, false);
-    if(score>bestScore){ bestScore=score; best=m; }
+  if(level==='expert'){ // ver4
+    return iterativeDeepeningChooseMove(state, color, 1200, 6);
   }
-  return best || moves[0];
+
+  if(level==='grandmaster'){ // ver5
+    return iterativeDeepeningChooseMove(state, color, 2000, 8);
+  }
+
+  return moves[0];
 }
 
 /* ===================== 이벤트 ===================== */
